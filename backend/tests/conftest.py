@@ -1,0 +1,199 @@
+import asyncio
+from collections.abc import AsyncGenerator
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.auth.jwt import create_access_token
+from app.auth.password import hash_password
+from app.db.session import get_db
+from app.main import create_app
+from app.models.user import Base, User, UserRole
+
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+TestSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest_asyncio.fixture
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with TestSessionLocal() as session:
+        yield session
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest_asyncio.fixture
+async def app(db_session: AsyncSession):
+    application = create_app()
+
+    async def override_get_db():
+        yield db_session
+
+    application.dependency_overrides[get_db] = override_get_db
+    return application
+
+
+@pytest_asyncio.fixture
+async def admin_user(db_session: AsyncSession) -> User:
+    user = User(
+        id="00000000-0000-0000-0000-000000000001",
+        username="admin",
+        email="admin@gsl.local",
+        hashed_password=hash_password("admin123"),
+        role=UserRole.admin,
+        is_active=True,
+        api_key="admin-api-key-0000000000000000000000000000000000000000",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return user
+
+
+@pytest_asyncio.fixture
+async def editor_user(db_session: AsyncSession) -> User:
+    user = User(
+        id="00000000-0000-0000-0000-000000000002",
+        username="editor",
+        email="editor@gsl.local",
+        hashed_password=hash_password("editor123"),
+        role=UserRole.editor,
+        is_active=True,
+        api_key="editor-api-key-000000000000000000000000000000000000000",
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return user
+
+
+@pytest_asyncio.fixture
+async def consumer_user(db_session: AsyncSession) -> User:
+    user = User(
+        id="00000000-0000-0000-0000-000000000003",
+        username="consumer",
+        email="consumer@gsl.local",
+        hashed_password=hash_password("consumer123"),
+        role=UserRole.consumer,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    return user
+
+
+@pytest_asyncio.fixture
+async def admin_token(admin_user: User) -> str:
+    return create_access_token(admin_user.id, admin_user.role.value)
+
+
+@pytest_asyncio.fixture
+async def editor_token(editor_user: User) -> str:
+    return create_access_token(editor_user.id, editor_user.role.value)
+
+
+@pytest_asyncio.fixture
+async def consumer_token(consumer_user: User) -> str:
+    return create_access_token(consumer_user.id, consumer_user.role.value)
+
+
+@pytest_asyncio.fixture
+async def client(app) -> AsyncGenerator[AsyncClient, None]:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def mongo_db():
+    """Provide a mock MongoDB database for tests using a simple in-memory store."""
+    from unittest.mock import MagicMock
+
+    _store: list[dict] = []
+
+    class MockCollection:
+        async def create_index(self, *args, **kwargs):
+            pass
+
+        async def insert_one(self, doc):
+            _store.append(doc.copy())
+            return MagicMock(inserted_id="mock-id")
+
+        async def find_one(self, query):
+            for doc in _store:
+                if self._matches(doc, query):
+                    return doc
+            return None
+
+        async def find_one_and_update(self, query, update):
+            for doc in _store:
+                if self._matches(doc, query):
+                    if "$set" in update:
+                        for k, v in update["$set"].items():
+                            doc[k] = v
+                    return doc
+            return None
+
+        async def delete_many(self, query):
+            original_len = len(_store)
+            _store[:] = [d for d in _store if not self._matches(d, query)]
+            return MagicMock(deleted_count=original_len - len(_store))
+
+        def _matches(self, doc, query):
+            for key, value in query.items():
+                doc_val = doc.get(key)
+                if isinstance(value, dict):
+                    for op, op_val in value.items():
+                        if op == "$gt":
+                            if not (doc_val is not None and doc_val > op_val):
+                                return False
+                        elif op == "$lt":
+                            if not (doc_val is not None and doc_val < op_val):
+                                return False
+                        elif op == "$regex":
+                            import re
+                            if not (doc_val is not None and re.search(op_val, str(doc_val))):
+                                return False
+                        elif op == "$ne":
+                            if doc_val == op_val:
+                                return False
+                else:
+                    if doc_val != value:
+                        return False
+            return True
+
+    class MockDB:
+        def __init__(self):
+            self.password_resets = MockCollection()
+
+    return MockDB()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def override_mongo(app, mongo_db):
+    """Override the MongoDB dependency for all tests."""
+    from app.db.mongo import get_mongo_db
+
+    async def mock_get_mongo_db():
+        return mongo_db
+
+    app.dependency_overrides[get_mongo_db] = mock_get_mongo_db
+    yield
+    app.dependency_overrides.pop(get_mongo_db, None)
