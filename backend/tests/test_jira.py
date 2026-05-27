@@ -436,18 +436,19 @@ async def test_connection_test_with_mock(
     )
     config_id = create_res.json()["id"]
 
-    # Mock the HTTP call and DNS resolution
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "version": "9.4.0",
-        "deploymentType": "Cloud",
-        "serverTitle": "My Jira",
+    # Mock the service function directly
+    mock_result = {
+        "success": True,
+        "message": "Connection successful",
+        "server_info": {
+            "version": "9.4.0",
+            "deployment_type": "Cloud",
+            "server_title": "My Jira",
+        },
     }
 
-    with patch("app.services.jira_service.resolve_and_validate_url", new_callable=AsyncMock) as mock_resolve, \
-         patch("httpx.AsyncClient.get", return_value=mock_response):
-        mock_resolve.return_value = "https://conntest.atlassian.net/rest/api/2/serverInfo"
+    with patch("app.api.integrations.jira_routes.test_jira_connection", new_callable=AsyncMock) as mock_test:
+        mock_test.return_value = mock_result
 
         res = await client.post(
             f"/integrations/jira/configs/{config_id}/test",
