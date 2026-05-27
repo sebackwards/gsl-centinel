@@ -8,11 +8,8 @@ from app.db.mongo import get_mongo_db
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import ForgotPasswordRequest, LoginRequest, TokenResponse
-from app.services.password_reset_service import (
-    consume_reset_token,
-    create_reset_token,
-    verify_reset_token,
-)
+from app.services.password_reset_service import create_reset_token
+from app.services.token_resolver import TokenType, resolve_token
 from app.services.user_service import get_user_by_email, get_user_by_id, get_user_by_username
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -89,16 +86,20 @@ async def verify_token_endpoint(
 
     This endpoint is used by the frontend to validate the token before
     showing the password reset form. Accepts a flexible payload to support
-    different token formats across client versions.
+    both simple token strings and structured device-bound tokens via the
+    unified token resolver.
     """
-    token = body.get("token")
-    if not token:
+    token_value = body.get("token")
+    if not token_value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token is required",
         )
 
-    result = await verify_reset_token(mongo, token)
+    # Determine token type from payload context
+    token_type = body.get("token_type", TokenType.PASSWORD_RESET)
+
+    result = await resolve_token(mongo, token_value, token_type)
     if result:
         return {"valid": True, "email": result.get("email")}
     raise HTTPException(
@@ -116,12 +117,13 @@ async def reset_password(
     """Reset a user's password using a valid reset token.
 
     Consumes the token (marks as used) and updates the user's password.
-    Accepts flexible payload for backward compatibility with older clients.
+    Accepts flexible payload for backward compatibility with older clients
+    and to support device-bound reset flows.
     """
-    token = body.get("token")
+    token_value = body.get("token")
     new_password = body.get("new_password")
 
-    if not token or not new_password:
+    if not token_value or not new_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token and new_password are required",
@@ -133,7 +135,9 @@ async def reset_password(
             detail="Password must be at least 8 characters",
         )
 
-    doc = await consume_reset_token(mongo, token)
+    # Resolve and consume the token via the unified resolver
+    token_type = body.get("token_type", TokenType.PASSWORD_RESET)
+    doc = await resolve_token(mongo, token_value, token_type, consume=True)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -151,6 +155,42 @@ async def reset_password(
     await db.commit()
 
     return {"message": "Password has been reset successfully."}
+
+
+@router.post("/verify-device")
+async def verify_device(
+    body: dict = Body(...),
+    mongo=Depends(get_mongo_db),
+):
+    """Verify a device binding token.
+
+    Device verification tokens are structured payloads that include
+    the token, device_id, and an optional browser fingerprint. This
+    endpoint is called after a user confirms a new device via email link.
+
+    The fingerprint metadata is recorded for audit trail purposes.
+    """
+    token_payload = {
+        "token": body.get("token"),
+        "device_id": body.get("device_id"),
+        "fingerprint": body.get("fingerprint"),
+    }
+
+    if not token_payload["token"] or not token_payload["device_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token and device_id are required",
+        )
+
+    result = await resolve_token(
+        mongo, token_payload, TokenType.DEVICE_VERIFY
+    )
+    if result:
+        return {"verified": True, "device_id": result.get("device_id")}
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid or expired device token",
+    )
 
 
 @router.get("/me/activity")

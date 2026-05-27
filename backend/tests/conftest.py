@@ -237,6 +237,8 @@ async def mongo_db():
             self.password_resets = MockCollection()
             self.rate_limits = MockCollection()
             self.user_activity = MockCollection()
+            self.device_verifications = MockCollection()
+            self.email_confirmations = MockCollection()
 
     return MockDB()
 
