@@ -15,6 +15,7 @@ from app.auth.password import hash_password
 from app.db.session import get_db
 from app.main import create_app
 from app.models.user import Base, User, UserRole
+from app.models.kb import KBEntry, KBChunk  # noqa: F401 — ensure tables are registered
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -126,35 +127,81 @@ async def mongo_db():
     """Provide a mock MongoDB database for tests using a simple in-memory store."""
     from unittest.mock import MagicMock
 
-    _store: list[dict] = []
-
     class MockCollection:
+        def __init__(self):
+            self._store: list[dict] = []
+
         async def create_index(self, *args, **kwargs):
             pass
 
         async def insert_one(self, doc):
-            _store.append(doc.copy())
+            self._store.append(doc.copy())
             return MagicMock(inserted_id="mock-id")
 
         async def find_one(self, query):
-            for doc in _store:
+            for doc in self._store:
                 if self._matches(doc, query):
                     return doc
             return None
 
-        async def find_one_and_update(self, query, update):
-            for doc in _store:
+        async def find_one_and_update(self, query, update, upsert=False, return_document=False):
+            for doc in self._store:
                 if self._matches(doc, query):
-                    if "$set" in update:
-                        for k, v in update["$set"].items():
-                            doc[k] = v
+                    self._apply_update(doc, update)
                     return doc
+            if upsert:
+                # Create new doc from $setOnInsert + query literals
+                new_doc = {}
+                if "$setOnInsert" in update:
+                    new_doc.update(update["$setOnInsert"])
+                # Apply $set
+                if "$set" in update:
+                    new_doc.update(update["$set"])
+                # Apply $inc
+                if "$inc" in update:
+                    for k, v in update["$inc"].items():
+                        new_doc[k] = new_doc.get(k, 0) + v
+                # Apply $push
+                if "$push" in update:
+                    for k, v in update["$push"].items():
+                        if isinstance(v, dict) and "$each" in v:
+                            if k not in new_doc:
+                                new_doc[k] = []
+                            new_doc[k].extend(v["$each"])
+                            if "$slice" in v:
+                                new_doc[k] = new_doc[k][v["$slice"]:]
+                        else:
+                            if k not in new_doc:
+                                new_doc[k] = []
+                            new_doc[k].append(v)
+                self._store.append(new_doc)
+                return new_doc
             return None
+
+        def _apply_update(self, doc, update):
+            if "$set" in update:
+                for k, v in update["$set"].items():
+                    doc[k] = v
+            if "$inc" in update:
+                for k, v in update["$inc"].items():
+                    doc[k] = doc.get(k, 0) + v
+            if "$push" in update:
+                for k, v in update["$push"].items():
+                    if isinstance(v, dict) and "$each" in v:
+                        if k not in doc:
+                            doc[k] = []
+                        doc[k].extend(v["$each"])
+                        if "$slice" in v:
+                            doc[k] = doc[k][v["$slice"]:]
+                    else:
+                        if k not in doc:
+                            doc[k] = []
+                        doc[k].append(v)
 
         async def delete_many(self, query):
-            original_len = len(_store)
-            _store[:] = [d for d in _store if not self._matches(d, query)]
-            return MagicMock(deleted_count=original_len - len(_store))
+            original_len = len(self._store)
+            self._store[:] = [d for d in self._store if not self._matches(d, query)]
+            return MagicMock(deleted_count=original_len - len(self._store))
 
         def _matches(self, doc, query):
             for key, value in query.items():
@@ -164,8 +211,14 @@ async def mongo_db():
                         if op == "$gt":
                             if not (doc_val is not None and doc_val > op_val):
                                 return False
+                        elif op == "$gte":
+                            if not (doc_val is not None and doc_val >= op_val):
+                                return False
                         elif op == "$lt":
                             if not (doc_val is not None and doc_val < op_val):
+                                return False
+                        elif op == "$lte":
+                            if not (doc_val is not None and doc_val <= op_val):
                                 return False
                         elif op == "$regex":
                             import re
@@ -182,6 +235,8 @@ async def mongo_db():
     class MockDB:
         def __init__(self):
             self.password_resets = MockCollection()
+            self.rate_limits = MockCollection()
+            self.user_activity = MockCollection()
 
     return MockDB()
 
@@ -189,11 +244,17 @@ async def mongo_db():
 @pytest_asyncio.fixture(autouse=True)
 async def override_mongo(app, mongo_db):
     """Override the MongoDB dependency for all tests."""
+    from unittest.mock import patch
     from app.db.mongo import get_mongo_db
 
     async def mock_get_mongo_db():
         return mongo_db
 
     app.dependency_overrides[get_mongo_db] = mock_get_mongo_db
-    yield
+
+    # Also patch the module-level function for direct calls (e.g., in login endpoint)
+    with patch("app.db.mongo.get_mongo_db", mock_get_mongo_db), \
+         patch("app.api.control.auth_routes.get_mongo_db", mock_get_mongo_db):
+        yield
+
     app.dependency_overrides.pop(get_mongo_db, None)

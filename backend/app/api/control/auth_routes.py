@@ -20,6 +20,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    # Rate limit login attempts
+    try:
+        from app.services.rate_limiter import check_rate_limit
+        mongo_db = await get_mongo_db()
+        limit_result = await check_rate_limit(mongo_db, body.username, "/auth/login", max_requests=10, window_seconds=300)
+        if not limit_result["allowed"]:
+            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Rate limiting is non-critical
+
     user = await get_user_by_username(db, body.username)
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(
@@ -32,6 +44,15 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
             detail="User account is disabled",
         )
     token = create_access_token(user.id, user.role.value)
+
+    # Track login activity
+    try:
+        from app.services.activity_tracker import record_login
+        mongo = await get_mongo_db()
+        await record_login(mongo, user.id, None)
+    except Exception:
+        pass  # Activity tracking is non-critical
+
     return TokenResponse(access_token=token)
 
 
@@ -130,3 +151,21 @@ async def reset_password(
     await db.commit()
 
     return {"message": "Password has been reset successfully."}
+
+
+@router.get("/me/activity")
+async def get_my_activity(
+    current_user: User = Depends(get_current_user),
+    mongo=Depends(get_mongo_db),
+):
+    """Get the current user's recent activity and login history."""
+    from app.services.activity_tracker import get_user_activity
+    activity = await get_user_activity(mongo, current_user.id)
+    if not activity:
+        return {"login_count": 0, "last_login": None, "recent_logins": []}
+    return {
+        "login_count": activity.get("login_count", 0),
+        "last_login": activity.get("last_login"),
+        "last_seen": activity.get("last_seen"),
+        "recent_logins": activity.get("login_history", [])[-5:],
+    }
