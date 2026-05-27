@@ -200,11 +200,98 @@ async def receive_webhook(
     event_type = payload.get("webhookEvent", "unknown")
     issue_data = payload.get("issue")
 
+    # Get MongoDB for ticket cache and delivery logging
+    from app.db.mongo import get_mongo_db
+    mongo_db = await get_mongo_db()
+
     result = await process_webhook_event(
         event_type=event_type,
         issue_data=issue_data,
         config=config,
+        mongo_db=mongo_db,
         redis_client=None,
     )
 
     return result
+
+
+@router.post("/webhook-logs/query")
+async def query_webhook_logs(
+    request: Request,
+    current_user: User = Depends(require_admin),
+):
+    """
+    Query webhook delivery logs with flexible filtering.
+
+    Accepts a JSON body with filter criteria. Supports filtering by
+    config_name, event_type, status, and ticket_key. Used by the admin
+    monitoring dashboard for complex queries and aggregations.
+
+    Example body:
+        {"config_name": "Production Jira", "status": "delivered"}
+    """
+    from app.db.mongo import get_mongo_db
+    from app.services.webhook_log_service import get_delivery_logs
+
+    mongo_db = await get_mongo_db()
+
+    body = await request.json()
+    filter_params = {}
+    for key in ("config_name", "event_type", "status", "ticket_key"):
+        value = body.get(key)
+        if value is not None:
+            filter_params[key] = value
+
+    limit = body.get("limit", 50)
+    logs = await get_delivery_logs(mongo_db, filter_params, limit=limit)
+    return {"logs": logs, "total": len(logs)}
+
+
+@router.get("/webhook-logs/status/{config_name}")
+async def get_webhook_status(
+    config_name,
+    current_user: User = Depends(require_admin),
+):
+    """
+    Get the latest webhook delivery status for a specific integration.
+
+    Returns the most recent delivery log entry for the named config,
+    including delivery timestamp and any error details.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.services.webhook_log_service import get_delivery_status
+
+    mongo_db = await get_mongo_db()
+    status = await get_delivery_status(mongo_db, config_name)
+    if not status:
+        raise HTTPException(status_code=404, detail="No delivery logs found")
+    return status
+
+
+@router.post("/enrich-ticket")
+async def enrich_ticket(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Enrich a KB entry with data from a linked Jira ticket.
+
+    Looks up the ticket in the local cache (populated by webhooks/syncs)
+    and fetches the latest status from the ticket's API URL if available.
+
+    This endpoint is called by the KB editor when linking a ticket to
+    provide auto-populated metadata.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.services.ticket_enrichment_service import enrich_from_ticket
+
+    body = await request.json()
+    ticket_key = body.get("ticket_key")
+    if not ticket_key:
+        raise HTTPException(status_code=400, detail="ticket_key is required")
+
+    mongo_db = await get_mongo_db()
+    enrichment = await enrich_from_ticket(mongo_db, ticket_key)
+    if not enrichment:
+        raise HTTPException(status_code=404, detail="Ticket not found in cache")
+    return enrichment

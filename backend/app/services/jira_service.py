@@ -262,13 +262,14 @@ async def process_webhook_event(
     event_type: str,
     issue_data: dict | None,
     config: JiraConfig,
+    mongo_db: Any | None = None,
     redis_client: Any | None = None,
 ) -> dict[str, Any]:
     """
     Process an incoming Jira webhook event.
 
-    Updates the Redis cache with the changed issue data and logs
-    the event for audit purposes.
+    Updates the ticket cache in MongoDB and logs the delivery for
+    monitoring purposes.
     """
     if not issue_data:
         return {"processed": False, "reason": "No issue data in payload"}
@@ -283,8 +284,26 @@ async def process_webhook_event(
         "priority": fields.get("priority", {}).get("name") if fields.get("priority") else None,
         "assignee": fields.get("assignee", {}).get("displayName") if fields.get("assignee") else None,
         "labels": fields.get("labels", []),
+        "self_url": issue_data.get("self"),
         "updated": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Store in MongoDB ticket cache for enrichment
+    if mongo_db:
+        from app.services.ticket_enrichment_service import store_ticket_in_cache
+        await store_ticket_in_cache(mongo_db, ticket)
+
+        # Log the delivery
+        from app.services.webhook_log_service import log_webhook_delivery
+        await log_webhook_delivery(
+            db=mongo_db,
+            config_id=config.id,
+            config_name=config.name,
+            webhook_secret=config.webhook_secret,
+            event_type=event_type,
+            ticket_key=key,
+            status="delivered",
+        )
 
     # Update single ticket in Redis cache
     if redis_client:

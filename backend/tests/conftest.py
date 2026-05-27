@@ -128,6 +128,30 @@ async def mongo_db():
     """Provide a mock MongoDB database for tests using a simple in-memory store."""
     from unittest.mock import MagicMock
 
+    class MockCursor:
+        """Mock MongoDB cursor supporting sort, limit, and async iteration."""
+        def __init__(self, results):
+            self._results = results
+
+        def sort(self, key, direction=-1):
+            try:
+                self._results.sort(key=lambda d: d.get(key) or "", reverse=(direction == -1))
+            except TypeError:
+                pass
+            return self
+
+        def limit(self, n):
+            self._results = self._results[:n]
+            return self
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._results:
+                raise StopAsyncIteration
+            return self._results.pop(0)
+
     class MockCollection:
         def __init__(self):
             self._store: list[dict] = []
@@ -139,11 +163,22 @@ async def mongo_db():
             self._store.append(doc.copy())
             return MagicMock(inserted_id="mock-id")
 
-        async def find_one(self, query):
-            for doc in self._store:
-                if self._matches(doc, query):
-                    return doc
-            return None
+        def find(self, query=None):
+            """Return a mock cursor over matching documents."""
+            if query is None:
+                query = {}
+            results = [doc.copy() for doc in self._store if self._matches(doc, query)]
+            return MockCursor(results)
+
+        async def find_one(self, query, sort=None):
+            matches = [doc for doc in self._store if self._matches(doc, query)]
+            if sort:
+                key, direction = sort[0] if isinstance(sort, list) else sort
+                try:
+                    matches.sort(key=lambda d: d.get(key) or "", reverse=(direction == -1))
+                except TypeError:
+                    pass
+            return matches[0] if matches else None
 
         async def find_one_and_update(self, query, update, upsert=False, return_document=False):
             for doc in self._store:
@@ -238,6 +273,8 @@ async def mongo_db():
             self.password_resets = MockCollection()
             self.rate_limits = MockCollection()
             self.user_activity = MockCollection()
+            self.webhook_deliveries = MockCollection()
+            self.ticket_cache = MockCollection()
 
     return MockDB()
 
@@ -253,7 +290,7 @@ async def override_mongo(app, mongo_db):
 
     app.dependency_overrides[get_mongo_db] = mock_get_mongo_db
 
-    # Also patch the module-level function for direct calls (e.g., in login endpoint)
+    # Also patch the module-level function for direct calls
     with patch("app.db.mongo.get_mongo_db", mock_get_mongo_db), \
          patch("app.api.control.auth_routes.get_mongo_db", mock_get_mongo_db):
         yield
