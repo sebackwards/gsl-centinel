@@ -8,6 +8,7 @@ from sqlalchemy import text
 from app.api.control.auth_routes import router as auth_router
 from app.api.control.user_routes import router as user_router
 from app.api.data.kb_routes import router as kb_router
+from app.api.integrations.jira_routes import router as jira_router
 from app.api.health import router as health_router
 from app.config import settings
 from app.db.session import engine
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(user_router)
     app.include_router(kb_router)
+    app.include_router(jira_router)
     app.include_router(health_router)
 
     return app

@@ -16,6 +16,7 @@ from app.db.session import get_db
 from app.main import create_app
 from app.models.user import Base, User, UserRole
 from app.models.kb import KBEntry, KBChunk  # noqa: F401 — ensure tables are registered
+from app.models.jira import JiraConfig  # noqa: F401 — ensure tables are registered
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 

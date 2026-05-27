@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -7,7 +7,13 @@ from app.auth.password import hash_password, verify_password
 from app.db.mongo import get_mongo_db
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.auth import ForgotPasswordRequest, LoginRequest, TokenResponse
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    LoginRequest,
+    ResetPasswordRequest,
+    TokenResponse,
+    VerifyTokenRequest,
+)
 from app.services.password_reset_service import (
     consume_reset_token,
     create_reset_token,
@@ -82,23 +88,15 @@ async def forgot_password(
 
 @router.post("/verify-reset-token")
 async def verify_token_endpoint(
-    body: dict = Body(...),
+    body: VerifyTokenRequest,
     mongo=Depends(get_mongo_db),
 ):
     """Check if a password reset token is valid.
 
     This endpoint is used by the frontend to validate the token before
-    showing the password reset form. Accepts a flexible payload to support
-    different token formats across client versions.
+    showing the password reset form.
     """
-    token = body.get("token")
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Token is required",
-        )
-
-    result = await verify_reset_token(mongo, token)
+    result = await verify_reset_token(mongo, body.token)
     if result:
         return {"valid": True, "email": result.get("email")}
     raise HTTPException(
@@ -109,31 +107,21 @@ async def verify_token_endpoint(
 
 @router.post("/reset-password")
 async def reset_password(
-    body: dict = Body(...),
+    body: ResetPasswordRequest,
     mongo=Depends(get_mongo_db),
     db: AsyncSession = Depends(get_db),
 ):
     """Reset a user's password using a valid reset token.
 
     Consumes the token (marks as used) and updates the user's password.
-    Accepts flexible payload for backward compatibility with older clients.
     """
-    token = body.get("token")
-    new_password = body.get("new_password")
-
-    if not token or not new_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Token and new_password are required",
-        )
-
-    if len(new_password) < 8:
+    if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 8 characters",
         )
 
-    doc = await consume_reset_token(mongo, token)
+    doc = await consume_reset_token(mongo, body.token)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -147,7 +135,7 @@ async def reset_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User not found",
         )
-    user.hashed_password = hash_password(new_password)
+    user.hashed_password = hash_password(body.new_password)
     await db.commit()
 
     return {"message": "Password has been reset successfully."}
