@@ -215,7 +215,7 @@ async def test_webhook_stores_ticket_in_cache(
 
 @pytest.mark.asyncio
 async def test_enrich_ticket_follows_external_redirect(
-    client: AsyncClient, admin_user: User, admin_token: str, mongo_db
+    client: AsyncClient, admin_user: User, admin_token: str, mongo_db, monkeypatch
 ):
     """Enrichment follows redirects to valid external Jira URLs.
 
@@ -223,8 +223,8 @@ async def test_enrich_ticket_follows_external_redirect(
     migrated (e.g., old.atlassian.net -> new.atlassian.net). The
     enrichment service must follow these legitimate redirects.
     """
-    from unittest.mock import patch
     import httpx as _httpx
+    from app.services import ticket_enrichment_service
 
     await mongo_db.ticket_cache.insert_one({
         "key": "MIG-1",
@@ -234,31 +234,32 @@ async def test_enrich_ticket_follows_external_redirect(
     })
 
     # Simulate: old URL redirects to new external URL which returns data
-    redirect_response = _httpx.Response(
-        302,
-        headers={"Location": "https://new-instance.atlassian.net/rest/api/2/issue/MIG-1"},
-        request=_httpx.Request("GET", "https://old-instance.atlassian.net/rest/api/2/issue/MIG-1"),
-    )
-    final_response = _httpx.Response(
-        200,
-        json={"fields": {"status": {"name": "Done"}, "resolution": {"name": "Fixed"}, "updated": "2026-05-28T10:00:00Z"}},
-        request=_httpx.Request("GET", "https://new-instance.atlassian.net/rest/api/2/issue/MIG-1"),
-    )
-
-    call_count = [0]
-
-    async def mock_send(self, request, **kwargs):
-        call_count[0] += 1
+    async def mock_handler(request: _httpx.Request) -> _httpx.Response:
         if "new-instance" in str(request.url):
-            return final_response
-        return redirect_response
-
-    with patch("httpx.AsyncClient.send", mock_send):
-        res = await client.post(
-            "/integrations/jira/enrich-ticket",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"ticket_key": "MIG-1"},
+            return _httpx.Response(
+                200,
+                json={"fields": {"status": {"name": "Done"}, "resolution": {"name": "Fixed"}, "updated": "2026-05-28T10:00:00Z"}},
+            )
+        return _httpx.Response(
+            302,
+            headers={"Location": "https://new-instance.atlassian.net/rest/api/2/issue/MIG-1"},
         )
+
+    transport = _httpx.MockTransport(mock_handler)
+    original_client = _httpx.AsyncClient
+
+    def patched_client(**kwargs):
+        kwargs["transport"] = transport
+        kwargs.pop("verify", None)
+        return original_client(**kwargs)
+
+    monkeypatch.setattr(ticket_enrichment_service.httpx, "AsyncClient", patched_client)
+
+    res = await client.post(
+        "/integrations/jira/enrich-ticket",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"ticket_key": "MIG-1"},
+    )
 
     assert res.status_code == 200
     data = res.json()
