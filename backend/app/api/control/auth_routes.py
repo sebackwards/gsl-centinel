@@ -43,7 +43,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
         # Perform a dummy hash check to prevent timing-based user enumeration.
         # Without this, an attacker can distinguish "user exists" from "user
         # doesn't exist" by measuring response time (bcrypt is slow).
-        verify_password(body.password, "$2b$12$dummysaltdummysaltdummuKQm8E7GOZ.jOaWMNOECXhG0E6ZyuV6")
+        verify_password(body.password, "$2b$12$LJ3m4ov2PcMmrYOqmZqBkuC3sZFGPHMbUel4MMqwYa5A8qOxLu/PG")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",

@@ -55,10 +55,21 @@ async def get_delivery_logs(
     Supports filtering by config_name, event_type, status, and ticket_key.
     Used by the admin dashboard to monitor webhook health and debug
     delivery failures.
+
+    Note: filter values are sanitized against known dangerous MongoDB
+    operators to prevent injection attacks.
     """
+    # Known dangerous operators that could bypass query intent
+    _BLOCKED_OPS = {"$ne", "$gt", "$lt", "$gte", "$lte", "$in", "$nin", "$exists"}
+
     query = {}
     for key, value in filter_params.items():
         if value is not None:
+            # Block known dangerous operators in dict-type values
+            if isinstance(value, dict):
+                if any(op in value for op in _BLOCKED_OPS):
+                    logger.warning(f"Blocked operator in filter key '{key}': {list(value.keys())}")
+                    continue
             query[key] = value
 
     results = []

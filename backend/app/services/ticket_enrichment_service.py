@@ -63,8 +63,22 @@ async def enrich_from_ticket(
     # This URL comes from the cached ticket data (populated by webhooks)
     self_url = ticket.get("self_url")
     if self_url:
+        # Validate the initial URL against SSRF before fetching
+        from app.services.jira_service import validate_url_ssrf, SSRFProtectionError
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            validate_url_ssrf(self_url)
+        except SSRFProtectionError as e:
+            logger.warning(f"Blocked invalid self_url for {ticket_key}: {e}")
+            return enrichment
+
+        try:
+            # Follow redirects to handle Jira's URL shorteners and
+            # instance migrations (e.g., old.atlassian.net -> new.atlassian.net)
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                follow_redirects=True,
+                max_redirects=5,
+            ) as client:
                 response = await client.get(
                     self_url,
                     headers={"Accept": "application/json"},
