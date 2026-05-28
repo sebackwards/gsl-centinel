@@ -83,6 +83,8 @@ async def enrich_from_ticket(
                     self_url,
                     headers={"Accept": "application/json"},
                 )
+            # Record the final URL after any redirects for audit purposes
+            enrichment["fetched_url"] = str(response.url)
             if response.status_code == 200:
                 live_data = response.json()
                 fields = live_data.get("fields", {})
