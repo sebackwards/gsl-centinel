@@ -15,8 +15,8 @@ from app.auth.password import hash_password
 from app.db.session import get_db
 from app.main import create_app
 from app.models.user import Base, User, UserRole
-from app.models.kb import KBEntry, KBChunk  # noqa: F401 — ensure tables are registered
-from app.models.jira import JiraConfig  # noqa: F401 — ensure tables are registered
+from app.models.kb import KBEntry, KBChunk
+from app.models.jira import JiraConfig
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -125,11 +125,9 @@ async def client(app) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest_asyncio.fixture
 async def mongo_db():
-    """Provide a mock MongoDB database for tests using a simple in-memory store."""
     from unittest.mock import MagicMock
 
     class MockCursor:
-        """Mock MongoDB cursor supporting sort, limit, and async iteration."""
         def __init__(self, results):
             self._results = results
 
@@ -164,7 +162,6 @@ async def mongo_db():
             return MagicMock(inserted_id="mock-id")
 
         def find(self, query=None):
-            """Return a mock cursor over matching documents."""
             if query is None:
                 query = {}
             results = [doc.copy() for doc in self._store if self._matches(doc, query)]
@@ -186,18 +183,14 @@ async def mongo_db():
                     self._apply_update(doc, update)
                     return doc
             if upsert:
-                # Create new doc from $setOnInsert + query literals
                 new_doc = {}
                 if "$setOnInsert" in update:
                     new_doc.update(update["$setOnInsert"])
-                # Apply $set
                 if "$set" in update:
                     new_doc.update(update["$set"])
-                # Apply $inc
                 if "$inc" in update:
                     for k, v in update["$inc"].items():
                         new_doc[k] = new_doc.get(k, 0) + v
-                # Apply $push
                 if "$push" in update:
                     for k, v in update["$push"].items():
                         if isinstance(v, dict) and "$each" in v:
@@ -281,7 +274,6 @@ async def mongo_db():
 
 @pytest_asyncio.fixture(autouse=True)
 async def override_mongo(app, mongo_db):
-    """Override the MongoDB dependency for all tests."""
     from unittest.mock import patch
     from app.db.mongo import get_mongo_db
 
@@ -290,7 +282,6 @@ async def override_mongo(app, mongo_db):
 
     app.dependency_overrides[get_mongo_db] = mock_get_mongo_db
 
-    # Also patch the module-level function for direct calls
     with patch("app.db.mongo.get_mongo_db", mock_get_mongo_db), \
          patch("app.api.control.auth_routes.get_mongo_db", mock_get_mongo_db):
         yield

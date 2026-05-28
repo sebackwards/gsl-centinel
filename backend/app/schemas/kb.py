@@ -1,4 +1,3 @@
-"""Knowledge Base schemas for request/response validation."""
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -56,7 +55,7 @@ class KBSearchResult(BaseModel):
     entry_title: str
     chunk_content: str
     chunk_type: str
-    score: float  # similarity score
+    score: float
 
 
 class KBSearchResponse(BaseModel):

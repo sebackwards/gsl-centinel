@@ -1,4 +1,3 @@
-"""Tests for Knowledge Base (Phase 2) endpoints."""
 import pytest
 from httpx import AsyncClient
 
@@ -16,7 +15,6 @@ ENTRY_PAYLOAD = {
 
 @pytest.fixture
 async def created_entry(client: AsyncClient, editor_token: str) -> dict:
-    """Helper fixture: create a KB entry and return its response data."""
     resp = await client.post(
         "/api/v1/kb/entries",
         json=ENTRY_PAYLOAD,
@@ -92,7 +90,6 @@ async def test_editor_can_update_entry(
     data = resp.json()
     assert data["title"] == "Updated Title"
     assert data["severity"] == "high"
-    # Unchanged fields remain
     assert data["category"] == "sql-injection"
 
 
@@ -118,7 +115,6 @@ async def test_editor_can_delete_entry(
     )
     assert resp.status_code == 204
 
-    # Verify it's no longer accessible
     resp = await client.get(
         f"/api/v1/kb/entries/{entry_id}",
         headers={"Authorization": f"Bearer {editor_token}"},
@@ -155,7 +151,6 @@ async def test_search_returns_matching_entries(
 async def test_search_filters_by_category(
     client: AsyncClient, editor_token: str, created_entry: dict
 ):
-    # Search with matching category
     resp = await client.post(
         "/api/v1/kb/search",
         json={"query": "SQL", "category": "sql-injection"},
@@ -165,7 +160,6 @@ async def test_search_filters_by_category(
     data = resp.json()
     assert len(data["results"]) >= 1
 
-    # Search with non-matching category
     resp = await client.post(
         "/api/v1/kb/search",
         json={"query": "SQL", "category": "xss"},

@@ -1,10 +1,3 @@
-"""API rate limiting using MongoDB with TTL indexes.
-
-Tracks request counts per user per endpoint within sliding time windows.
-Uses MongoDB's find_one_and_update with $inc for atomic counter increments
-and TTL indexes for automatic window expiration.
-"""
-
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
@@ -17,14 +10,9 @@ async def check_rate_limit(
     max_requests: int = 100,
     window_seconds: int = 60,
 ) -> dict:
-    """Check and increment the rate limit counter for a user+endpoint.
-
-    Returns {"allowed": bool, "remaining": int, "reset_at": datetime}
-    """
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=window_seconds)
 
-    # Find existing counter for this window, or create one
     doc = await db.rate_limits.find_one_and_update(
         {
             "user_id": user_id,
@@ -41,7 +29,7 @@ async def check_rate_limit(
             },
         },
         upsert=True,
-        return_document=True,  # return the updated doc
+        return_document=True,
     )
 
     count = doc.get("count", 1) if doc else 1
@@ -57,7 +45,6 @@ async def check_rate_limit(
 
 
 async def get_rate_limit_status(db, user_id: str, endpoint: str) -> dict | None:
-    """Get current rate limit status without incrementing."""
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=60)
 
@@ -70,5 +57,4 @@ async def get_rate_limit_status(db, user_id: str, endpoint: str) -> dict | None:
 
 
 async def init_rate_limit_indexes(db):
-    """Create TTL index on rate_limits collection."""
     await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)

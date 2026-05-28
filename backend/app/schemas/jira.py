@@ -1,4 +1,3 @@
-"""Jira integration schemas for request/response validation."""
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -15,7 +14,6 @@ class JiraConfigCreate(BaseModel):
     @field_validator("base_url")
     @classmethod
     def validate_base_url(cls, v: str) -> str:
-        """Ensure the base URL is a valid HTTPS Jira instance URL."""
         v = v.rstrip("/")
         if not v.startswith("https://"):
             raise ValueError("Jira base URL must use HTTPS")
@@ -86,7 +84,6 @@ class JiraSyncResponse(BaseModel):
 
 
 class JiraWebhookPayload(BaseModel):
-    """Incoming Jira webhook event payload."""
     webhook_event: str = Field(..., alias="webhookEvent")
     issue_event_type: str | None = Field(None, alias="issue_event_type_name")
     issue: dict | None = None

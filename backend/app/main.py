@@ -16,14 +16,12 @@ from app.db.session import engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Startup: verify DB connection
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception:
-        pass  # Allow app to start even if DB is not yet available
+        pass
     yield
-    # Shutdown: dispose engine
     await engine.dispose()
 
 

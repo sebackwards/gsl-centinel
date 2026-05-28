@@ -92,7 +92,6 @@ async def test_consumer_cannot_manage_users(
 async def test_create_user_duplicate_username(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    # Create first user
     await client.post(
         "/admin/users",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -103,7 +102,6 @@ async def test_create_user_duplicate_username(
             "role": "consumer",
         },
     )
-    # Try to create with same username
     response = await client.post(
         "/admin/users",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -121,7 +119,6 @@ async def test_create_user_duplicate_username(
 async def test_create_user_duplicate_email(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    # Create first user
     await client.post(
         "/admin/users",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -132,7 +129,6 @@ async def test_create_user_duplicate_email(
             "role": "consumer",
         },
     )
-    # Try to create with same email
     response = await client.post(
         "/admin/users",
         headers={"Authorization": f"Bearer {admin_token}"},

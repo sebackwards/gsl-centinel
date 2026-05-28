@@ -1,4 +1,3 @@
-"""Knowledge Base CRUD service."""
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +8,6 @@ from app.schemas.kb import KBEntryCreate, KBEntryUpdate
 async def create_entry(
     db: AsyncSession, user_id: str, data: KBEntryCreate
 ) -> KBEntry:
-    """Create a new KB entry."""
     entry = KBEntry(
         title=data.title,
         summary=data.summary,
@@ -27,7 +25,6 @@ async def create_entry(
 
 
 async def get_entry(db: AsyncSession, entry_id: str) -> KBEntry | None:
-    """Get a single KB entry by ID."""
     result = await db.execute(select(KBEntry).where(KBEntry.id == entry_id))
     return result.scalar_one_or_none()
 
@@ -38,7 +35,6 @@ async def list_entries(
     limit: int = 20,
     category: str | None = None,
 ) -> tuple[list[KBEntry], int]:
-    """List KB entries with pagination and optional category filter."""
     query = select(KBEntry)
     count_query = select(func.count()).select_from(KBEntry)
 
@@ -64,7 +60,6 @@ async def update_entry(
     user_role: str,
     data: KBEntryUpdate,
 ) -> KBEntry | None:
-    """Update a KB entry. Editors and admins can update any entry."""
     entry = await get_entry(db, entry_id)
     if not entry:
         return None
@@ -84,7 +79,6 @@ async def delete_entry(
     user_id: str,
     user_role: str,
 ) -> bool:
-    """Delete a KB entry. Editors and admins can delete."""
     entry = await get_entry(db, entry_id)
     if not entry:
         return False
@@ -100,10 +94,6 @@ async def search_entries(
     limit: int = 5,
     category: str | None = None,
 ) -> list[dict]:
-    """Simple text search on KB entries using LIKE.
-
-    Returns matching entries as search results. Vector search will be added later.
-    """
     search_term = f"%{query}%"
     stmt = (
         select(KBEntry)

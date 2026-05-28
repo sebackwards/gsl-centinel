@@ -1,13 +1,3 @@
-"""
-Jira integration service.
-
-Handles communication with Jira Cloud/Server instances, including:
-- Connection testing and validation
-- Ticket synchronization with Redis caching
-- Webhook signature verification
-- SSRF protection for configured URLs
-"""
-
 import hashlib
 import hmac
 import ipaddress
@@ -27,32 +17,16 @@ from app.schemas.jira import JiraConfigCreate, JiraConfigUpdate, JiraTicket
 
 logger = logging.getLogger(__name__)
 
-# Redis cache TTL for synced tickets
-TICKET_CACHE_TTL = 300  # 5 minutes
+TICKET_CACHE_TTL = 300
 
 
 class SSRFProtectionError(Exception):
-    """Raised when a URL fails SSRF validation."""
     pass
 
 
 def validate_url_ssrf(url: str) -> str:
-    """
-    Validate a URL against SSRF attacks.
-
-    Blocks:
-    - Private/internal IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1)
-    - Link-local addresses (169.254.x)
-    - Cloud metadata endpoints (169.254.169.254)
-    - Non-HTTPS schemes
-    - URLs with IP addresses instead of hostnames
-    - Known internal hostnames (localhost, *.internal, *.local)
-
-    Returns the validated URL or raises SSRFProtectionError.
-    """
     parsed = urlparse(url)
 
-    # Must be HTTPS
     if parsed.scheme != "https":
         raise SSRFProtectionError("Only HTTPS URLs are allowed")
 
@@ -60,7 +34,6 @@ def validate_url_ssrf(url: str) -> str:
     if not hostname:
         raise SSRFProtectionError("URL must have a valid hostname")
 
-    # Block known internal hostnames
     blocked_suffixes = (".internal", ".local", ".localhost", ".corp", ".lan")
     blocked_exact = ("localhost", "metadata", "metadata.google.internal")
     if hostname.lower() in blocked_exact:
@@ -68,7 +41,6 @@ def validate_url_ssrf(url: str) -> str:
     if any(hostname.lower().endswith(s) for s in blocked_suffixes):
         raise SSRFProtectionError(f"Hostname '{hostname}' is not allowed")
 
-    # Check if hostname is an IP address
     try:
         addr = ipaddress.ip_address(hostname)
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
@@ -76,28 +48,19 @@ def validate_url_ssrf(url: str) -> str:
                 f"IP address {hostname} is in a restricted range"
             )
     except ValueError:
-        # Not an IP address — that's fine, it's a hostname
         pass
 
     return url
 
 
 async def resolve_and_validate_url(url: str) -> str:
-    """
-    Resolve a hostname and validate the resolved IP against SSRF rules.
-
-    This prevents DNS rebinding attacks where a hostname resolves to an
-    internal IP after initial validation.
-    """
     import socket
 
     parsed = urlparse(url)
     hostname = parsed.hostname
 
-    # First pass: validate the URL structure
     validate_url_ssrf(url)
 
-    # Second pass: resolve DNS and check the actual IP
     try:
         addr_info = socket.getaddrinfo(hostname, parsed.port or 443)
         for family, _, _, _, sockaddr in addr_info:
@@ -117,15 +80,8 @@ async def resolve_and_validate_url(url: str) -> str:
 
 
 async def test_jira_connection(config: JiraConfig) -> dict[str, Any]:
-    """
-    Test connectivity to a Jira instance.
-
-    Makes a GET request to /rest/api/2/serverInfo to verify the
-    connection credentials and URL are valid.
-    """
     url = f"{config.base_url}/rest/api/2/serverInfo"
 
-    # Validate URL against SSRF before making the request
     await resolve_and_validate_url(url)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -147,9 +103,9 @@ async def test_jira_connection(config: JiraConfig) -> dict[str, Any]:
             },
         }
     elif response.status_code == 401:
-        return {"success": False, "message": "Authentication failed — check API token and email", "server_info": None}
+        return {"success": False, "message": "Authentication failed", "server_info": None}
     elif response.status_code == 403:
-        return {"success": False, "message": "Access denied — check permissions", "server_info": None}
+        return {"success": False, "message": "Access denied", "server_info": None}
     else:
         return {"success": False, "message": f"Unexpected response: {response.status_code}", "server_info": None}
 
@@ -159,12 +115,6 @@ async def sync_tickets(
     redis_client: Any | None = None,
     since: datetime | None = None,
 ) -> dict[str, Any]:
-    """
-    Sync tickets from a Jira project.
-
-    Fetches recent issues from the configured project and caches them
-    in Redis for fast access by the KB and reporting services.
-    """
     jql = f"project = {config.project_key} ORDER BY updated DESC"
     if since:
         since_str = since.strftime("%Y-%m-%d %H:%M")
@@ -172,7 +122,6 @@ async def sync_tickets(
 
     url = f"{config.base_url}/rest/api/2/search"
 
-    # Validate URL against SSRF
     await resolve_and_validate_url(url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -204,7 +153,6 @@ async def sync_tickets(
         }
         tickets.append(ticket)
 
-    # Cache in Redis if available
     cached_until = None
     if redis_client:
         cache_key = f"jira:tickets:{config.id}"
@@ -226,7 +174,6 @@ async def get_cached_tickets(
     config_id: str,
     redis_client: Any,
 ) -> list[dict] | None:
-    """Retrieve cached tickets from Redis."""
     cache_key = f"jira:tickets:{config_id}"
     cached = await redis_client.get(cache_key)
     if cached:
@@ -239,12 +186,6 @@ def verify_webhook_signature(
     signature_header: str,
     secret: str,
 ) -> bool:
-    """
-    Verify a Jira webhook signature.
-
-    Jira Cloud signs webhook payloads with HMAC-SHA256 using the
-    configured webhook secret.
-    """
     if not signature_header or not secret:
         return False
 
@@ -254,7 +195,6 @@ def verify_webhook_signature(
         hashlib.sha256,
     ).hexdigest()
 
-    # Use constant-time comparison to prevent timing attacks
     return hmac.compare_digest(f"sha256={expected}", signature_header)
 
 
@@ -265,12 +205,6 @@ async def process_webhook_event(
     mongo_db: Any | None = None,
     redis_client: Any | None = None,
 ) -> dict[str, Any]:
-    """
-    Process an incoming Jira webhook event.
-
-    Updates the ticket cache in MongoDB and logs the delivery for
-    monitoring purposes.
-    """
     if not issue_data:
         return {"processed": False, "reason": "No issue data in payload"}
 
@@ -288,12 +222,10 @@ async def process_webhook_event(
         "updated": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Store in MongoDB ticket cache for enrichment
     if mongo_db:
         from app.services.ticket_enrichment_service import store_ticket_in_cache
         await store_ticket_in_cache(mongo_db, ticket)
 
-        # Log the delivery
         from app.services.webhook_log_service import log_webhook_delivery
         await log_webhook_delivery(
             db=mongo_db,
@@ -305,7 +237,6 @@ async def process_webhook_event(
             status="delivered",
         )
 
-    # Update single ticket in Redis cache
     if redis_client:
         ticket_key = f"jira:ticket:{config.id}:{key}"
         await redis_client.set(
@@ -318,14 +249,9 @@ async def process_webhook_event(
     return {"processed": True, "ticket_key": key, "event": event_type}
 
 
-# --- CRUD operations for JiraConfig ---
-
-
 async def create_jira_config(
     db: AsyncSession, user_id: str, data: JiraConfigCreate
 ) -> JiraConfig:
-    """Create a new Jira integration configuration."""
-    # Validate URL before saving
     validate_url_ssrf(data.base_url)
 
     config = JiraConfig(
@@ -344,13 +270,11 @@ async def create_jira_config(
 
 
 async def get_jira_config(db: AsyncSession, config_id: str) -> JiraConfig | None:
-    """Get a Jira config by ID."""
     result = await db.execute(select(JiraConfig).where(JiraConfig.id == config_id))
     return result.scalar_one_or_none()
 
 
 async def list_jira_configs(db: AsyncSession) -> list[JiraConfig]:
-    """List all Jira configurations."""
     result = await db.execute(
         select(JiraConfig).order_by(JiraConfig.created_at.desc())
     )
@@ -360,14 +284,12 @@ async def list_jira_configs(db: AsyncSession) -> list[JiraConfig]:
 async def update_jira_config(
     db: AsyncSession, config_id: str, data: JiraConfigUpdate
 ) -> JiraConfig | None:
-    """Update a Jira configuration."""
     config = await get_jira_config(db, config_id)
     if not config:
         return None
 
     update_data = data.model_dump(exclude_unset=True)
 
-    # Validate new URL if provided
     if "base_url" in update_data:
         validate_url_ssrf(update_data["base_url"])
 
@@ -380,7 +302,6 @@ async def update_jira_config(
 
 
 async def delete_jira_config(db: AsyncSession, config_id: str) -> bool:
-    """Delete a Jira configuration."""
     config = await get_jira_config(db, config_id)
     if not config:
         return False

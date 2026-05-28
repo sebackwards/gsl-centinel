@@ -1,9 +1,3 @@
-"""Jira integration API routes.
-
-Provides endpoints for managing Jira connections, syncing tickets,
-and receiving webhook events from Jira Cloud/Server instances.
-"""
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,7 +34,6 @@ async def create_config(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new Jira integration configuration. Admin only."""
     try:
         config = await create_jira_config(db, current_user.id, data)
     except SSRFProtectionError as e:
@@ -56,7 +49,6 @@ async def list_configs(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all Jira configurations. Admin only."""
     configs = await list_jira_configs(db)
     return JiraConfigListResponse(configs=configs, total=len(configs))
 
@@ -67,7 +59,6 @@ async def get_config(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a specific Jira configuration. Admin only."""
     config = await get_jira_config(db, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
@@ -81,7 +72,6 @@ async def update_config(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a Jira configuration. Admin only."""
     try:
         config = await update_jira_config(db, config_id, data)
     except SSRFProtectionError as e:
@@ -100,7 +90,6 @@ async def delete_config(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a Jira configuration. Admin only."""
     deleted = await delete_jira_config(db, config_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Configuration not found")
@@ -112,7 +101,6 @@ async def test_connection(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Test connectivity to the configured Jira instance. Admin only."""
     config = await get_jira_config(db, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
@@ -137,7 +125,6 @@ async def trigger_sync(
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a ticket sync from Jira. Admin only."""
     config = await get_jira_config(db, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
@@ -154,7 +141,6 @@ async def trigger_sync(
     except Exception as e:
         return JiraSyncResponse(synced_count=0, errors=[str(e)])
 
-    # Update last_sync timestamp
     from datetime import datetime, timezone
     config.last_sync_at = datetime.now(timezone.utc)
     await db.flush()
@@ -169,12 +155,6 @@ async def receive_webhook(
     db: AsyncSession = Depends(get_db),
     x_hub_signature: str | None = Header(None, alias="X-Hub-Signature"),
 ):
-    """
-    Receive and process a Jira webhook event.
-
-    This endpoint is called by Jira when issues are created, updated,
-    or deleted. The webhook signature is verified if a secret is configured.
-    """
     config = await get_jira_config(db, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
@@ -183,14 +163,12 @@ async def receive_webhook(
 
     body = await request.body()
 
-    # Verify webhook signature if secret is configured
     if config.webhook_secret:
         if not x_hub_signature:
             raise HTTPException(status_code=401, detail="Missing webhook signature")
         if not verify_webhook_signature(body, x_hub_signature, config.webhook_secret):
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    # Parse and process the event
     import json
     try:
         payload = json.loads(body)
@@ -200,7 +178,6 @@ async def receive_webhook(
     event_type = payload.get("webhookEvent", "unknown")
     issue_data = payload.get("issue")
 
-    # Get MongoDB for ticket cache and delivery logging
     from app.db.mongo import get_mongo_db
     mongo_db = await get_mongo_db()
 
@@ -220,16 +197,6 @@ async def query_webhook_logs(
     request: Request,
     current_user: User = Depends(require_admin),
 ):
-    """
-    Query webhook delivery logs with flexible filtering.
-
-    Accepts a JSON body with filter criteria. Supports filtering by
-    config_name, event_type, status, and ticket_key. Used by the admin
-    monitoring dashboard for complex queries and aggregations.
-
-    Example body:
-        {"config_name": "Production Jira", "status": "delivered"}
-    """
     from app.db.mongo import get_mongo_db
     from app.services.webhook_log_service import get_delivery_logs
 
@@ -252,12 +219,6 @@ async def get_webhook_status(
     config_name,
     current_user: User = Depends(require_admin),
 ):
-    """
-    Get the latest webhook delivery status for a specific integration.
-
-    Returns the most recent delivery log entry for the named config,
-    including delivery timestamp and any error details.
-    """
     from app.db.mongo import get_mongo_db
     from app.services.webhook_log_service import get_delivery_status
 
@@ -273,15 +234,6 @@ async def enrich_ticket(
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Enrich a KB entry with data from a linked Jira ticket.
-
-    Looks up the ticket in the local cache (populated by webhooks/syncs)
-    and fetches the latest status from the ticket's API URL if available.
-
-    This endpoint is called by the KB editor when linking a ticket to
-    provide auto-populated metadata.
-    """
     from app.db.mongo import get_mongo_db
     from app.services.ticket_enrichment_service import enrich_from_ticket
 

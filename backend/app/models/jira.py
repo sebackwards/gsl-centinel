@@ -1,4 +1,3 @@
-"""Jira integration models."""
 import uuid
 from datetime import datetime
 
@@ -9,11 +8,6 @@ from app.models.user import Base
 
 
 class JiraConfig(Base):
-    """Stores Jira instance connection configuration.
-
-    Each config represents a connection to a Jira Cloud or Server instance.
-    Only admins can create/modify configurations.
-    """
     __tablename__ = "jira_configs"
 
     id: Mapped[str] = mapped_column(

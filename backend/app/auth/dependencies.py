@@ -15,7 +15,6 @@ async def get_current_user(
     x_api_key: Annotated[str | None, Header()] = None,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    # Check API key first
     if x_api_key:
         user = await get_user_by_api_key(db, x_api_key)
         if user and user.is_active:
@@ -25,7 +24,6 @@ async def get_current_user(
             detail="Invalid API key",
         )
 
-    # Then check JWT
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

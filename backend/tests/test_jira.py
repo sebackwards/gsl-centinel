@@ -1,5 +1,3 @@
-"""Tests for Jira integration — config CRUD, SSRF protection, webhooks."""
-
 import hashlib
 import hmac
 import json
@@ -10,14 +8,10 @@ from httpx import AsyncClient
 from app.models.user import User
 
 
-# --- Config CRUD ---
-
-
 @pytest.mark.asyncio
 async def test_admin_can_create_jira_config(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Admin can create a Jira integration config."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -35,14 +29,13 @@ async def test_admin_can_create_jira_config(
     assert data["base_url"] == "https://mycompany.atlassian.net"
     assert data["project_key"] == "SEC"
     assert data["is_active"] is True
-    assert "api_token" not in data  # Should not be exposed in response
+    assert "api_token" not in data
 
 
 @pytest.mark.asyncio
 async def test_editor_cannot_create_jira_config(
     client: AsyncClient, editor_user: User, editor_token: str
 ):
-    """Non-admin users cannot manage Jira configs."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {editor_token}"},
@@ -61,8 +54,6 @@ async def test_editor_cannot_create_jira_config(
 async def test_admin_can_list_jira_configs(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Admin can list all Jira configs."""
-    # Create one first
     await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -89,7 +80,6 @@ async def test_admin_can_list_jira_configs(
 async def test_admin_can_update_jira_config(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Admin can update a Jira config."""
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -117,7 +107,6 @@ async def test_admin_can_update_jira_config(
 async def test_admin_can_delete_jira_config(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Admin can delete a Jira config."""
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -137,7 +126,6 @@ async def test_admin_can_delete_jira_config(
     )
     assert res.status_code == 204
 
-    # Verify it's gone
     res = await client.get(
         f"/integrations/jira/configs/{config_id}",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -145,14 +133,10 @@ async def test_admin_can_delete_jira_config(
     assert res.status_code == 404
 
 
-# --- SSRF Protection ---
-
-
 @pytest.mark.asyncio
 async def test_ssrf_blocks_localhost(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Cannot create config with localhost URL."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -172,7 +156,6 @@ async def test_ssrf_blocks_localhost(
 async def test_ssrf_blocks_internal_ip(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Cannot create config with private IP address."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -192,7 +175,6 @@ async def test_ssrf_blocks_internal_ip(
 async def test_ssrf_blocks_metadata_endpoint(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Cannot create config targeting cloud metadata endpoint."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -211,7 +193,6 @@ async def test_ssrf_blocks_metadata_endpoint(
 async def test_ssrf_blocks_internal_domain(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Cannot create config with .internal or .local domains."""
     for domain in ["https://jira.internal", "https://jira.corp", "https://service.local"]:
         res = await client.post(
             "/integrations/jira/configs",
@@ -231,7 +212,6 @@ async def test_ssrf_blocks_internal_domain(
 async def test_ssrf_blocks_http_scheme(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Cannot create config with plain HTTP (must be HTTPS)."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -243,7 +223,6 @@ async def test_ssrf_blocks_http_scheme(
             "project_key": "EVL",
         },
     )
-    # Pydantic validator or SSRF check should reject this
     assert res.status_code == 400 or res.status_code == 422
 
 
@@ -251,7 +230,6 @@ async def test_ssrf_blocks_http_scheme(
 async def test_valid_external_url_is_accepted(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """A valid external HTTPS URL passes SSRF checks."""
     res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -266,15 +244,10 @@ async def test_valid_external_url_is_accepted(
     assert res.status_code == 201
 
 
-# --- Webhook ---
-
-
 @pytest.mark.asyncio
 async def test_webhook_processes_valid_event(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Webhook endpoint processes a valid Jira event."""
-    # Create a config without webhook secret (no signature required)
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -318,7 +291,6 @@ async def test_webhook_processes_valid_event(
 async def test_webhook_rejects_invalid_signature(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Webhook rejects requests with invalid signature when secret is set."""
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -350,7 +322,6 @@ async def test_webhook_rejects_invalid_signature(
 async def test_webhook_requires_signature_when_secret_configured(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Webhook requires signature header when secret is configured."""
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -367,7 +338,6 @@ async def test_webhook_requires_signature_when_secret_configured(
 
     payload = json.dumps({"webhookEvent": "jira:issue_created", "issue": {"key": "RSG-1", "fields": {}}})
 
-    # No signature header
     res = await client.post(
         f"/integrations/jira/webhook/{config_id}",
         content=payload,
@@ -380,7 +350,6 @@ async def test_webhook_requires_signature_when_secret_configured(
 async def test_webhook_accepts_valid_signature(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Webhook accepts requests with valid HMAC signature."""
     secret = "valid-webhook-secret"
     create_res = await client.post(
         "/integrations/jira/configs",
@@ -399,7 +368,6 @@ async def test_webhook_accepts_valid_signature(
     payload = json.dumps({"webhookEvent": "jira:issue_updated", "issue": {"key": "VSG-42", "fields": {"summary": "Test", "status": {"name": "Done"}}}})
     payload_bytes = payload.encode("utf-8")
 
-    # Compute valid signature
     sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
     res = await client.post(
@@ -414,14 +382,10 @@ async def test_webhook_accepts_valid_signature(
     assert res.json()["processed"] is True
 
 
-# --- Test Connection (mocked) ---
-
-
 @pytest.mark.asyncio
 async def test_connection_test_returns_failure_for_unreachable(
     client: AsyncClient, admin_user: User, admin_token: str
 ):
-    """Test connection endpoint returns failure when Jira is unreachable."""
     create_res = await client.post(
         "/integrations/jira/configs",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -435,14 +399,11 @@ async def test_connection_test_returns_failure_for_unreachable(
     )
     config_id = create_res.json()["id"]
 
-    # Without mocking, the DNS resolution in SSRF check will fail
-    # which gets caught by the generic Exception handler
     res = await client.post(
         f"/integrations/jira/configs/{config_id}/test",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert res.status_code == 200
     data = res.json()
-    # Should fail gracefully — either SSRF blocks it or connection fails
     assert data["success"] is False
     assert "message" in data

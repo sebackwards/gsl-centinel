@@ -26,7 +26,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    # Rate limit login attempts
     try:
         from app.services.rate_limiter import check_rate_limit
         mongo_db = await get_mongo_db()
@@ -36,13 +35,10 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
     except HTTPException:
         raise
     except Exception:
-        pass  # Rate limiting is non-critical
+        pass
 
     user = await get_user_by_username(db, body.username)
     if not user:
-        # Perform a dummy hash check to prevent timing-based user enumeration.
-        # Without this, an attacker can distinguish "user exists" from "user
-        # doesn't exist" by measuring response time (bcrypt is slow).
         verify_password(body.password, "$2b$12$LJ3m4ov2PcMmrYOqmZqBkuC3sZFGPHMbUel4MMqwYa5A8qOxLu/PG")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,13 +56,12 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token
         )
     token = create_access_token(user.id, user.role.value)
 
-    # Track login activity
     try:
         from app.services.activity_tracker import record_login
         mongo = await get_mongo_db()
         await record_login(mongo, user.id, None)
     except Exception:
-        pass  # Activity tracking is non-critical
+        pass
 
     return TokenResponse(access_token=token)
 
@@ -85,13 +80,9 @@ async def forgot_password(
     db: AsyncSession = Depends(get_db),
     mongo=Depends(get_mongo_db),
 ):
-    """Request a password reset. Generates a token and stores it in MongoDB.
-    In production this would send an email; here we return success regardless
-    to avoid user enumeration."""
     user = await get_user_by_email(db, body.email)
     if user and user.is_active:
         await create_reset_token(mongo, user.id, user.email)
-    # Always return success to prevent email enumeration
     return {"message": "If the email exists, a reset link has been sent."}
 
 
@@ -100,11 +91,6 @@ async def verify_token_endpoint(
     body: VerifyTokenRequest,
     mongo=Depends(get_mongo_db),
 ):
-    """Check if a password reset token is valid.
-
-    This endpoint is used by the frontend to validate the token before
-    showing the password reset form.
-    """
     result = await verify_reset_token(mongo, body.token)
     if result:
         return {"valid": True, "email": result.get("email")}
@@ -120,10 +106,6 @@ async def reset_password(
     mongo=Depends(get_mongo_db),
     db: AsyncSession = Depends(get_db),
 ):
-    """Reset a user's password using a valid reset token.
-
-    Consumes the token (marks as used) and updates the user's password.
-    """
     if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -137,7 +119,6 @@ async def reset_password(
             detail="Invalid or expired token",
         )
 
-    # Update the user's password
     user = await get_user_by_id(db, doc["user_id"])
     if not user:
         raise HTTPException(
@@ -155,7 +136,6 @@ async def get_my_activity(
     current_user: User = Depends(get_current_user),
     mongo=Depends(get_mongo_db),
 ):
-    """Get the current user's recent activity and login history."""
     from app.services.activity_tracker import get_user_activity
     activity = await get_user_activity(mongo, current_user.id)
     if not activity:

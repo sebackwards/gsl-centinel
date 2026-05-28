@@ -1,12 +1,3 @@
-"""
-MongoDB connection for ephemeral token storage.
-
-Password reset tokens are short-lived and high-throughput during incidents.
-A document store with TTL indexes is the standard pattern for this kind of
-ephemeral data — keeps the relational DB clean and leverages MongoDB's
-native expiration capabilities.
-"""
-
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.config import settings
@@ -16,7 +7,6 @@ _db: AsyncIOMotorDatabase | None = None
 
 
 async def init_mongo():
-    """Initialize MongoDB connection and indexes."""
     global _client, _db
     _client = AsyncIOMotorClient(settings.MONGO_URL)
     _db = _client[settings.MONGO_DB_NAME]
@@ -24,7 +14,6 @@ async def init_mongo():
 
 
 async def get_mongo_db() -> AsyncIOMotorDatabase:
-    """FastAPI dependency for MongoDB access."""
     global _db
     if _db is None:
         await init_mongo()
