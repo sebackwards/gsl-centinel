@@ -23,7 +23,6 @@ from app.services.user_service import get_user_by_email, get_user_by_id, get_use
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     try:
