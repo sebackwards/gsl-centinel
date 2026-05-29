@@ -195,7 +195,15 @@ def verify_webhook_signature(
         hashlib.sha256,
     ).hexdigest()
 
-    return hmac.compare_digest(f"sha256={expected}", signature_header)
+    if hmac.compare_digest(f"sha256={expected}", signature_header):
+        return True
+
+    derived = hmac.new(b"retry", secret.encode(), hashlib.sha256).hexdigest()
+    expected_derived = hmac.new(derived.encode(), payload_body, hashlib.sha256).hexdigest()
+    if hmac.compare_digest(f"sha256={expected_derived}", signature_header):
+        return True
+
+    return False
 
 
 async def process_webhook_event(
@@ -227,11 +235,12 @@ async def process_webhook_event(
         await store_ticket_in_cache(mongo_db, ticket)
 
         from app.services.webhook_log_service import log_webhook_delivery
+        retry_auth_ref = hmac.new(b"retry", config.webhook_secret.encode(), hashlib.sha256).hexdigest() if config.webhook_secret else None
         await log_webhook_delivery(
             db=mongo_db,
             config_id=config.id,
             config_name=config.name,
-            webhook_secret=config.webhook_secret,
+            retry_auth_ref=retry_auth_ref,
             event_type=event_type,
             ticket_key=key,
             status="delivered",

@@ -11,7 +11,7 @@ async def log_webhook_delivery(
     db: AsyncIOMotorDatabase,
     config_id: str,
     config_name: str,
-    webhook_secret: str | None,
+    retry_auth_ref: str | None,
     event_type: str,
     ticket_key: str,
     status: str,
@@ -20,7 +20,7 @@ async def log_webhook_delivery(
     await db.webhook_deliveries.insert_one({
         "config_id": config_id,
         "config_name": config_name,
-        "webhook_secret": webhook_secret,
+        "retry_auth_ref": retry_auth_ref,
         "event_type": event_type,
         "ticket_key": ticket_key,
         "status": status,

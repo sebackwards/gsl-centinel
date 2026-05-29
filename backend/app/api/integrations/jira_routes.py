@@ -214,6 +214,28 @@ async def query_webhook_logs(
     return {"logs": logs, "total": len(logs)}
 
 
+@router.post("/webhook-logs/diagnostic")
+async def diagnostic_query_logs(
+    request: Request,
+    current_user: User = Depends(require_admin),
+):
+    from app.db.mongo import get_mongo_db
+    from app.services.filter_compiler import validate_filter_spec, compile_filter_spec
+    from app.services.webhook_log_service import get_delivery_logs
+
+    mongo_db = await get_mongo_db()
+    body = await request.json()
+    filter_spec = body.get("filters", [])
+    try:
+        validate_filter_spec(filter_spec)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    compiled_query = compile_filter_spec(filter_spec)
+    limit = body.get("limit", 50)
+    logs = await get_delivery_logs(mongo_db, compiled_query, limit=limit)
+    return {"logs": logs, "total": len(logs)}
+
+
 @router.get("/webhook-logs/status/{config_name}")
 async def get_webhook_status(
     config_name,
